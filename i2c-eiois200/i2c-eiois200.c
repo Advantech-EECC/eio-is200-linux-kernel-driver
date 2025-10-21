@@ -1008,7 +1008,7 @@ static int eiois200_i2c_probe(struct platform_device *pdev)
 		sprintf(i2c->adap.name, "eiois200-%s", name[ch]);
 		i2c_set_adapdata(&i2c->adap, i2c);
 
-		ret = i2c_add_numbered_adapter(&i2c->adap);
+		ret = i2c_add_adapter(&i2c->adap);
 		dev_dbg(dev, "Add I2C_SMB[%d] %s. ret=%d\n",
 			ch, ret ? "Error" : "Success", ret);
 		if (ret) {
