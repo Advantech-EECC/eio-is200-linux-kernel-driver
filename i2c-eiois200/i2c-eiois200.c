@@ -275,6 +275,17 @@ static int wait_busy(struct dev_i2c *i2c)
 	return 0;
 }
 
+static void set_slave_addr(struct dev_i2c *i2c)
+{
+	int reg = IS_I2C(i2c) ? I2C_REG_MYADDR : SMB_REG_SADDR;
+	int slave_addr = 0;
+
+	if (reg == SMB_REG_SADDR) {
+		slave_addr = 0x0;
+		I2C_WRITE(i2c, reg, slave_addr);
+	}
+}
+
 /* Force send 9 clocks to reset bus */
 static void reset_bus(struct dev_i2c *i2c)
 {
@@ -287,8 +298,10 @@ static void reset_bus(struct dev_i2c *i2c)
 	dev_dbg(i2c->dev, "i2c[%d] bus reset\n", i2c->ch);
 	if (IS_I2C(i2c))
 		I2C_WRITE(i2c, I2C_REG_ECTRL, I2C_ECTRL_RST);
-	else
+	else {
 		reg_or(i2c, SMB_REG_HC2, SMB_HC2_SRESET);
+		set_slave_addr(i2c);
+	}
 
 	do {
 		my_delay(cnt++);
@@ -392,6 +405,8 @@ static void switch_i2c_mode(struct dev_i2c *i2c, bool on)
 	I2C_WRITE(i2c, SMB_REG_HC2,
 			on ? tmp |  SMB_HC2_I2C_EN | SMB_HC2_SRESET
 			: tmp & ~SMB_HC2_I2C_EN);
+
+	set_slave_addr(i2c);
 }
 
 static void i2c_clear(struct dev_i2c *i2c)
@@ -1013,6 +1028,7 @@ static int eiois200_i2c_probe(struct platform_device *pdev)
 
 		sprintf(i2c->adap.name, "eiois200-%s", name[ch]);
 		i2c_set_adapdata(&i2c->adap, i2c);
+		set_slave_addr(i2c);
 
 		ret = i2c_add_numbered_adapter(&i2c->adap);
 		dev_dbg(dev, "Add I2C_SMB[%d] %s. ret=%d\n",

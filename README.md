@@ -34,7 +34,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 > Get it from Github repository with the following command in the Linux terminal.
 
 ```bash
-  git clone git@github.com:ADVANTECH-Corpcd/eio-is200-linux-kernel-driver.git
+  git clone git@github.com:ADVANTECH-Corp/eio-is200-linux-kernel-driver.git
   cd eio-is200-linux-kernel-driver
 ```
 ## Install
