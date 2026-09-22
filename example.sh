@@ -69,18 +69,12 @@ function WdtSub1Menu
 
 	while :
 	do
-		local Timeleft=`cat /sys/class/watchdog/$wdt/timeleft`
 
 		# Show Menu
 		sync
 		show_title
 
 		echo "Watchdog"
-		if [ "$Timeleft" != "0" ]; then
-			echo -e "\033[41m\033[30m\033[05mSystem reboots in ${Timeleft}(s)\033[0m"
-		else
-			echo -e
-		fi
 
 		echo -e "0) Back to Main menu(Stop watchdog)"
 		echo -e "1) set timeout value:" `cat /sys/class/watchdog/$wdt/timeout`
@@ -92,7 +86,7 @@ function WdtSub1Menu
 		# Processes
 		case $sel in
 		"0")
-			echo V > /dev/${wdt}
+			echo -n V > /dev/${wdt}
 			return 1
 			;;
 		"1")

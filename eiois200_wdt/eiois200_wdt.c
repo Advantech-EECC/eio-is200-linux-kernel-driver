@@ -97,7 +97,6 @@ static struct _wdt {
 	u32	event_type;
 	u32	support;
 	u32	irq;
-	long	last_time;
 	struct	regmap  *iomap;
 	struct	device *dev;
 } wdt;
@@ -139,14 +138,6 @@ module_param(event_type, charp, 0);
 MODULE_PARM_DESC(event_type,
 		 "Watchdog timeout event type (RESET, PWRBTN, SCI, IRQ, GPIO)");
 
-/* Specify the IRQ number when the IRQ event is triggered */
-static int irq;
-module_param(irq, int, 0);
-MODULE_PARM_DESC(irq, "The IRQ number for IRQ event");
-
-static int timeout;
-module_param(timeout, int, 0444);
-MODULE_PARM_DESC(timeout, "Set PMC command timeout value.\n");
 
 static int wdt_set_timeout(struct watchdog_device *dev,
 			   unsigned int timeout)
@@ -199,7 +190,6 @@ static int pmc(u8 cmd, u8 ctrl, void *payload)
 		.size     = ctrl <= REG_EVENT	   ? 1 :
 			    ctrl >= REG_IRQ_NUMBER ? 1 : 4,
 		.payload  = payload,
-		.timeout  = timeout,
 	};
 
 	return eiois200_core_pmc_operation(wdt.dev, &op);
@@ -238,7 +228,7 @@ static int wdt_set_config(void)
 	/* Calculate event time and reset time */
 	if (wddev.pretimeout && wddev.timeout) {
 		if (wddev.timeout < wddev.pretimeout)
-			return -EINVAL;
+			wddev.pretimeout = wddev.timeout;
 
 		reset_time = wddev.timeout;
 		event_time = wddev.timeout - wddev.pretimeout;
@@ -337,7 +327,6 @@ static int wdt_start(struct watchdog_device *dev)
 
 	ret = set_ctrl(CTRL_START);
 	if (ret == 0) {
-		wdt.last_time = jiffies;
 		dev_dbg(wdt.dev, "Watchdog started\n");
 	}
 
@@ -347,7 +336,6 @@ static int wdt_start(struct watchdog_device *dev)
 static int wdt_stop(struct watchdog_device *dev)
 {
 	dev_dbg(wdt.dev, "Watchdog stopped\n");
-	wdt.last_time = 0;
 
 	return set_ctrl(CTRL_STOP);
 }
@@ -359,20 +347,8 @@ static int wdt_ping(struct watchdog_device *dev)
 	dev_dbg(wdt.dev, "Watchdog pings\n");
 
 	ret = set_ctrl(CTRL_TRIGGER);
-	if (ret == 0)
-		wdt.last_time = jiffies;
 
 	return ret;
-}
-
-static unsigned int wdt_get_timeleft(struct watchdog_device *dev)
-{
-	unsigned int timeleft = 0;
-
-	if (wdt.last_time != 0)
-		timeleft = wddev.timeout - ((jiffies - wdt.last_time) / HZ);
-
-	return timeleft;
 }
 
 static int wdt_support(void)
@@ -471,24 +447,41 @@ static int wdt_set_irq_io(void)
 	mutex_lock(&eiois200_dev->mutex);
 
 	/* Unlock EC IO port */
-	ret |= regmap_write(map, idx,  IOREG_UNLOCK);
-	ret |= regmap_write(map, idx,  IOREG_UNLOCK);
+        ret = regmap_write(map, idx, IOREG_UNLOCK);
+        if (ret)
+                goto unlock;
+        ret = regmap_write(map, idx, IOREG_UNLOCK);
+        if (ret)
+                goto unlock;
 
-	/* Select logical device to PMC */
-	ret |= regmap_write(map, idx,  IOREG_LDN);
-	ret |= regmap_write(map, data, IOREG_LDN_PMCIO);
+        /* Select logical device to PMC */
+        ret = regmap_write(map, idx, IOREG_LDN);
+        if (ret)
+                goto unlock;
+        ret = regmap_write(map, data, IOREG_LDN_PMCIO);
+        if (ret)
+                goto unlock;
 
-	/* Enable WDT */
-	ret |= regmap_write(map, idx,  IOREG_WDT_STATUS);
-	ret |= regmap_write(map, data, FLAG_WDT_ENABLED);
+        /* Enable WDT */
+        ret = regmap_write(map, idx, IOREG_WDT_STATUS);
+        if (ret)
+                goto unlock;
+        ret = regmap_write(map, data, FLAG_WDT_ENABLED);
+        if (ret)
+                goto unlock;
 
-	/* Set IRQ number */
-	ret |= regmap_write(map, idx,  IOREG_IRQ);
-	ret |= regmap_write(map, data, wdt.irq);
+        /* Set IRQ number */
+        ret = regmap_write(map, idx, IOREG_IRQ);
+        if (ret)
+                goto unlock;
+        ret = regmap_write(map, data, wdt.irq);
+        if (ret)
+                goto unlock;
 
-	/* Lock up */
-	ret |= regmap_write(map, idx,  IOREG_LOCK);
+        /* Lock back */
+        ret = regmap_write(map, idx, IOREG_LOCK);
 
+unlock:
 	mutex_unlock(&eiois200_dev->mutex);
 
 	return ret ? -EIO : 0;
@@ -564,13 +557,9 @@ static int query_irq(struct device *dev)
 {
 	int ret;
 
-	if (irq) {
-		wdt.irq = irq;
-	} else {
-		ret = wdt_get_irq(dev);
-		if (ret)
-			return ret;
-	}
+	ret = wdt_get_irq(dev);
+	if (ret)
+		return ret;
 
 	dev_dbg(wdt.dev, "IRQ = %d\n", wdt.irq);
 
@@ -605,7 +594,6 @@ static const struct watchdog_ops wdt_ops = {
 	.stop		= wdt_stop,
 	.ping		= wdt_ping,
 	.set_timeout	= wdt_set_timeout,
-	.get_timeleft	= wdt_get_timeleft,
 	.set_pretimeout = wdt_set_pretimeout,
 };
 
@@ -638,7 +626,7 @@ static int wdt_probe(struct platform_device *pdev)
 	if (wdt.event_type == EVENT_IRQ)
 		ret = devm_request_threaded_irq(dev, wdt.irq, wdt_isr,
 						wdt_threaded_isr,
-						IRQF_SHARED, pdev->name, dev);
+						IRQF_SHARED | IRQF_ONESHOT, pdev->name, dev);
 	if (ret) {
 		dev_err(dev, "IRQ %d request fail:%d. Disabled.\n",
 			wdt.irq, ret);
@@ -647,14 +635,8 @@ static int wdt_probe(struct platform_device *pdev)
 
 	/* Inform watchdog info */
 	wddev.ops = &wdt_ops;
-	ret = watchdog_init_timeout(&wddev, wddev.timeout, dev);
-	if (ret) {
-		dev_err(dev, "Init timeout fail\n");
-		return ret;
-	}
 
 	watchdog_stop_on_reboot(&wddev);
-
 	watchdog_stop_on_unregister(&wddev);
 
 	/* Register watchdog */
